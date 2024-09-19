@@ -1,0 +1,90 @@
+version: '3.8'
+
+services:
+  zookeeper:
+    image: bitnami/zookeeper:latest
+    ports:
+      - "2181:2181"
+    environment:
+      - ALLOW_ANONYMOUS_LOGIN=yes
+    networks:
+      - kafka_network
+
+  kafka:
+    image: wurstmeister/kafka:latest
+    ports:
+      - "9092:9092"
+    environment:
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_BROKER_ID: 0
+    depends_on:
+      - zookeeper
+    networks:
+      - kafka_network
+
+  cassandra:
+    image: cassandra:latest
+    ports:
+      - "9042:9042"
+    networks:
+      - kafka_network
+
+  spark:
+    image: bitnami/spark:latest
+    environment:
+      - SPARK_MODE=master
+    ports:
+      - "8080:8080"
+      - "7077:7077"
+      - "10000:10000"
+    volumes:
+      - ./app:/app
+    networks:
+      - kafka_network
+
+  spark-worker-1:
+    image: bitnami/spark:latest
+    environment:
+      - SPARK_MODE=worker
+      - SPARK_MASTER_URL=spark://spark:7077
+    depends_on:
+      - spark
+    networks:
+      - kafka_network
+
+  producer:
+    build: .
+    command: ["sh", "-c", "python /app/producer.py"]
+    volumes:
+      - ./app:/app
+    depends_on:
+      - kafka
+    networks:
+      - kafka_network
+
+  spark-streaming:
+    build: .
+    command: spark-submit --packages org.apache.spark:spark-sql-kafka-0-10_2.12:3.1.1,com.datastax.spark:spark-cassandra-connector_2.12:3.1.0 /app/streaming.py
+    volumes:
+      - ./app:/app
+    depends_on:
+      - kafka
+      - cassandra
+    networks:
+      - kafka_network
+
+  spark-analysis:
+    build: .
+    command: spark-submit --packages org.apache.spark:spark-sql-kafka-0-10_2.12:3.1.1,com.datastax.spark:spark-cassandra-connector_2.12:3.1.0 /app/analysis.py
+    volumes:
+      - ./app:/app
+    depends_on:
+      - spark-streaming
+    networks:
+      - kafka_network
+
+networks:
+  kafka_network:
+    driver: bridge
